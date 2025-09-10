@@ -53,7 +53,12 @@ uploaded = st.sidebar.file_uploader("Upload CSV or TSV", type=["csv", "tsv", "tx
 use_sample = st.sidebar.checkbox("Use built-in sample", value=False)
 
 # friendly separator labels visible to user
-sep_label = st.sidebar.selectbox("Separator", options=["Comma (,)", "Tab (\\t)", "Semicolon (;)") , index=0)
+sep_label = st.sidebar.selectbox(
+    "Separator",
+    options=["Comma (,)", "Tab (\\t)", "Semicolon (;)"],
+    index=0
+)
+
 if sep_label.startswith("Comma"):
     sep_opt = ","
 elif sep_label.startswith("Tab"):
