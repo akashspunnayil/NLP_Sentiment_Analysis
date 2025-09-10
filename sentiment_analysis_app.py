@@ -50,7 +50,21 @@ st.sidebar.header("Data & Settings")
 uploaded = st.sidebar.file_uploader("Upload CSV or TSV", type=["csv", "tsv", "txt"])
 use_sample = st.sidebar.checkbox("Use built-in sample", value=False)
 
-sep_opt = st.sidebar.selectbox("Separator", options=[",", "\t"], index=0)
+#sep_opt = st.sidebar.selectbox("Separator", options=[",", "\t"], index=0)
+
+# replace your old separator selectbox
+sep_label = st.sidebar.selectbox(
+    "Separator",
+    options=["Comma (,)", "Tab (\\t)"],  # visible labels
+    index=0
+)
+
+# map labels back to actual separator characters
+if sep_label.startswith("Comma"):
+    sep_opt = ","
+else:
+    sep_opt = "\t"
+
 
 # New: option to apply preprocessing or not
 apply_preprocess = st.sidebar.checkbox(
