@@ -52,6 +52,13 @@ use_sample = st.sidebar.checkbox("Use built-in sample", value=False)
 
 sep_opt = st.sidebar.selectbox("Separator", options=[",", "\t"], index=0)
 
+# New: option to apply preprocessing or not
+apply_preprocess = st.sidebar.checkbox(
+    "Apply preprocessing to text",
+    value=True,
+    help="If unchecked, raw text will be used (no lowercasing/stopword/stemming)."
+)
+
 if use_sample or uploaded is None:
     sample = pd.DataFrame({
         "Review": [
@@ -90,12 +97,19 @@ random_state = int(st.sidebar.number_input("Random state", value=42, step=1))
 
 # ---- Prepare data ----
 if st.button("Preprocess & Split"):
-    df["_clean_text_"] = df[text_col].astype(str).apply(preprocess)
+    # Respect apply_preprocess flag from sidebar
+    if apply_preprocess:
+        df["_clean_text_"] = df[text_col].astype(str).apply(preprocess)
+    else:
+        df["_clean_text_"] = df[text_col].astype(str)
+
     # coerce labels to integers 0/1
     try:
         df[label_col] = pd.to_numeric(df[label_col], errors="coerce")
     except Exception:
-        df[label_col] = df[label_col].astype(str).map(lambda x: 1 if str(x).lower() in ("1","yes","y","true","positive","pos") else 0)
+        df[label_col] = df[label_col].astype(str).map(
+            lambda x: 1 if str(x).lower() in ("1", "yes", "y", "true", "positive", "pos") else 0
+        )
     n_before = len(df)
     df = df.dropna(subset=[label_col])
     if len(df) < n_before:
@@ -110,7 +124,13 @@ if st.button("Preprocess & Split"):
     X = vectorizer.fit_transform(df["_clean_text_"])
     y = df[label_col].values
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=float(test_size), random_state=random_state, stratify=y if len(np.unique(y))>1 else None)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=float(test_size),
+        random_state=random_state,
+        stratify=y if len(np.unique(y)) > 1 else None
+    )
 
     # store in session
     st.session_state["vectorizer"] = vectorizer
@@ -118,6 +138,9 @@ if st.button("Preprocess & Split"):
     st.session_state["X_test"] = X_test
     st.session_state["y_train"] = y_train
     st.session_state["y_test"] = y_test
+    # remember choice so prediction uses same behaviour
+    st.session_state["apply_preprocess"] = bool(apply_preprocess)
+
     st.success("Preprocessing and split completed. Ready to train models.")
 
 # ---- Train models ----
@@ -130,7 +153,7 @@ def train_and_eval(model, X_train, y_train, X_test, y_test):
 
 st.subheader("Train models")
 if st.button("Train LogisticRegression, NaiveBayes, SVC"):
-    if not all(k in st.session_state for k in ("vectorizer","X_train","X_test","y_train","y_test")):
+    if not all(k in st.session_state for k in ("vectorizer", "X_train", "X_test", "y_train", "y_test")):
         st.warning("Run 'Preprocess & Split' first.")
     else:
         X_train = st.session_state["X_train"]
@@ -166,6 +189,10 @@ st.subheader("Predict line-by-line sentences")
 st.markdown("Enter one sentence per line. Predictions will be shown for all trained models.")
 input_text = st.text_area("Sentences (one per line)", value="The food was great\nService was terrible\nNot happy with the price")
 
+# show current preprocess mode (from session if set, else sidebar value)
+current_pre_flag = st.session_state.get("apply_preprocess", apply_preprocess)
+st.caption(f"Using preprocessing: {current_pre_flag}")
+
 if st.button("Predict Sentences"):
     sentences = [s.strip() for s in input_text.split("\n") if s.strip()]
     if len(sentences) == 0:
@@ -175,50 +202,55 @@ if st.button("Predict Sentences"):
             st.warning("You must run 'Preprocess & Split' (to fit vectorizer) and train models before prediction.")
         else:
             vectorizer = st.session_state["vectorizer"]
-            X_new = vectorizer.transform([preprocess(s) for s in sentences])
+            use_pre = st.session_state.get("apply_preprocess", apply_preprocess)
+
+            if use_pre:
+                X_new = vectorizer.transform([preprocess(s) for s in sentences])
+            else:
+                X_new = vectorizer.transform([str(s) for s in sentences])
 
             results = {"Sentence": sentences}
             # LogisticRegression
             if "lr_model" in st.session_state:
                 lr = st.session_state["lr_model"]
-                probs = lr.predict_proba(X_new)[:,1] if hasattr(lr, "predict_proba") else lr.decision_function(X_new)
+                probs = lr.predict_proba(X_new)[:, 1] if hasattr(lr, "predict_proba") else lr.decision_function(X_new)
                 preds = lr.predict(X_new)
-                results["LogReg_prob"] = [float(round(p,4)) for p in (probs.tolist() if hasattr(probs,'tolist') else probs)]
-                results["LogReg_pred"] = ["Positive" if int(p)==1 else "Negative" for p in preds]
+                results["LogReg_prob"] = [float(round(p, 4)) for p in (probs.tolist() if hasattr(probs, "tolist") else probs)]
+                results["LogReg_pred"] = ["Positive" if int(p) == 1 else "Negative" for p in preds]
             else:
-                results["LogReg_pred"] = ["(not trained)"]*len(sentences)
+                results["LogReg_pred"] = ["(not trained)"] * len(sentences)
 
             # Naive Bayes
             if "nb_model" in st.session_state:
                 nb = st.session_state["nb_model"]
-                probs = nb.predict_proba(X_new)[:,1]
+                probs = nb.predict_proba(X_new)[:, 1]
                 preds = nb.predict(X_new)
-                results["NB_prob"] = [float(round(p,4)) for p in probs.tolist()]
-                results["NB_pred"] = ["Positive" if int(p)==1 else "Negative" for p in preds]
+                results["NB_prob"] = [float(round(p, 4)) for p in probs.tolist()]
+                results["NB_pred"] = ["Positive" if int(p) == 1 else "Negative" for p in preds]
             else:
-                results["NB_pred"] = ["(not trained)"]*len(sentences)
+                results["NB_pred"] = ["(not trained)"] * len(sentences)
 
             # SVC
             if "svc_model" in st.session_state:
                 svc = st.session_state["svc_model"]
-                # SVC probability requires probability=True during training (we set it). If not available, fallback to decision_function
                 if hasattr(svc, "predict_proba"):
-                    probs = svc.predict_proba(X_new)[:,1]
+                    probs = svc.predict_proba(X_new)[:, 1]
                 else:
                     probs = svc.decision_function(X_new)
-                    # scale decision_function to 0..1 for display (sigmoid)
-                    probs = 1/(1+np.exp(-probs))
+                    probs = 1 / (1 + np.exp(-probs))
                 preds = svc.predict(X_new)
-                results["SVC_prob"] = [float(round(p,4)) for p in probs.tolist()]
-                results["SVC_pred"] = ["Positive" if int(p)==1 else "Negative" for p in preds]
+                results["SVC_prob"] = [float(round(p, 4)) for p in probs.tolist()]
+                results["SVC_pred"] = ["Positive" if int(p) == 1 else "Negative" for p in preds]
             else:
-                results["SVC_pred"] = ["(not trained)"]*len(sentences)
+                results["SVC_pred"] = ["(not trained)"] * len(sentences)
 
             res_df = pd.DataFrame(results)
             st.dataframe(res_df)
 
 # ---- Save / Load model (optional) ----
 st.subheader("Save / Load")
+out_dir_input = st.text_input("Artifacts directory (relative)", value="model_artifacts")
+
 col1, col2 = st.columns(2)
 with col1:
     if st.button("Save models & vectorizer to disk (pickle)"):
@@ -226,26 +258,36 @@ with col1:
         if "vectorizer" not in st.session_state:
             st.warning("Nothing to save. Fit vectorizer and train models first.")
         else:
-            out_dir = st.text_input("Output directory (relative)", value="model_artifacts")
+            out_dir = out_dir_input or "model_artifacts"
             os.makedirs(out_dir, exist_ok=True)
             joblib.dump(st.session_state["vectorizer"], f"{out_dir}/vectorizer.joblib")
-            for name in ("lr_model","nb_model","svc_model"):
+            for name in ("lr_model", "nb_model", "svc_model"):
                 if name in st.session_state:
                     joblib.dump(st.session_state[name], f"{out_dir}/{name}.joblib")
+            # save small metadata
+            meta = {"apply_preprocess": bool(st.session_state.get("apply_preprocess", apply_preprocess))}
+            joblib.dump(meta, f"{out_dir}/meta.joblib")
             st.success(f"Saved artifacts to {out_dir}")
 
 with col2:
     if st.button("Load models & vectorizer from disk (pickle)"):
         import joblib, os
-        in_dir = st.text_input("Input directory (relative)", value="model_artifacts")
+        in_dir = out_dir_input or "model_artifacts"
         try:
             st.session_state["vectorizer"] = joblib.load(f"{in_dir}/vectorizer.joblib")
-            for name in ("lr_model","nb_model","svc_model"):
+            for name in ("lr_model", "nb_model", "svc_model"):
                 path = f"{in_dir}/{name}.joblib"
                 try:
                     st.session_state[name] = joblib.load(path)
                 except Exception:
                     st.warning(f"Could not load {path}")
+            # load metadata if exists
+            try:
+                meta = joblib.load(f"{in_dir}/meta.joblib")
+                st.session_state["apply_preprocess"] = bool(meta.get("apply_preprocess", apply_preprocess))
+            except Exception:
+                # metadata optional
+                pass
             st.success("Loaded artifacts (if present).")
         except FileNotFoundError:
             st.error("Directory or files not found.")
@@ -254,9 +296,11 @@ with col2:
 st.markdown("---")
 st.markdown(
     """
-- This app preprocesses text with lowercasing, punctuation & number removal, stopword filtering (keeps negations), and Porter stemming.
+- This app preprocesses text with lowercasing, punctuation & number removal, stopword filtering (keeps negations), and Porter stemming when preprocessing is enabled.
+- If preprocessing is disabled, raw text strings are used for TF-IDF.
 - Vectorization uses TF-IDF fitted during 'Preprocess & Split'.
 - Train all three models using the 'Train' button. Predictions require the vectorizer + trained models in session.
+- Save/Load will also persist the `apply_preprocess` metadata to ensure consistent behavior.
 - For large datasets, reduce TF-IDF dimension limits or train outside Streamlit.
 """
 )
