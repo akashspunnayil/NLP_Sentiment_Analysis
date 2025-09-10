@@ -2,56 +2,57 @@
 import streamlit as st
 import pandas as pd
 import re
-import numpy as np
+import string
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.preprocessing.text import Tokenizer
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Embedding, SimpleRNN, Dense
-from tensorflow.keras.callbacks import Callback
-import tensorflow as tf
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report, accuracy_score
+import numpy as np
 
-st.set_page_config(page_title="RNN Sentiment Classifier", layout="wide")
+st.set_page_config(page_title="Sentiment Analysis (TF-IDF + ML)", layout="wide")
+st.title("Sentiment Analysis — TF-IDF + ML (LogReg, NB, SVC)")
 
-st.title("RNN — Text Sentiment Classifier (Streamlit)")
+# ---- ensure NLTK resources ----
+with st.spinner("Checking NLTK data..."):
+    try:
+        nltk.data.find("tokenizers/punkt")
+    except Exception:
+        nltk.download("punkt")
+    try:
+        nltk.data.find("corpora/stopwords")
+    except Exception:
+        nltk.download("stopwords")
 
-# ---------------------------
-# Utility functions
-# ---------------------------
-def clean_text(s: str) -> str:
-    s = str(s).lower()
-    s = re.sub(r"[^a-z\s']", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+stop_words = set(stopwords.words("english"))
+stemmer = PorterStemmer()
+negation_words = {"not", "no", "nor", "n't"}
 
-def to_padded(texts, tokenizer, max_len):
-    seqs = tokenizer.texts_to_sequences(texts)
-    return pad_sequences(seqs, maxlen=max_len, padding="post", truncating="post", value=0)
+# ---- preprocessing ----
+def preprocess(text: str) -> str:
+    if text is None:
+        return ""
+    text = str(text).lower()
+    text = text.translate(str.maketrans("", "", string.punctuation))
+    text = re.sub(r"\d+", "", text)
+    tokens = text.split()
+    # keep negations even if they are stopwords
+    tokens = [w for w in tokens if (w not in stop_words) or (w in negation_words)]
+    tokens = [stemmer.stem(w) for w in tokens]
+    return " ".join(tokens)
 
-class StreamlitProgress(Callback):
-    """Simple Keras callback to stream epochs progress to Streamlit"""
-    def __init__(self, progress_bar, status_text):
-        super().__init__()
-        self.progress_bar = progress_bar
-        self.status_text = status_text
+# ---- Sidebar: upload + params ----
+st.sidebar.header("Data & Settings")
+uploaded = st.sidebar.file_uploader("Upload CSV or TSV", type=["csv", "tsv", "txt"])
+use_sample = st.sidebar.checkbox("Use built-in sample", value=False)
 
-    def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-        self.status_text.text(f"Epoch {epoch+1} — loss: {logs.get('loss', 0):.4f}  val_loss: {logs.get('val_loss', 0):.4f}  acc: {logs.get('accuracy', 0):.4f}")
-        # update progress bar (assuming user sets epochs)
-        self.progress_bar.progress(min((epoch+1)/self.params.get('epochs', 1), 1.0))
-
-# ---------------------------
-# Sidebar: data upload + params
-# ---------------------------
-st.sidebar.header("Data & Hyperparameters")
-
-uploaded = st.sidebar.file_uploader("Upload dataset (CSV or TSV)", type=["csv","tsv","txt"])
-sep_choice = st.sidebar.selectbox("Separator", options=[",", "\t"], index=0 if uploaded is None else (1 if uploaded.name.endswith(".tsv") else 0))
-use_sample = st.sidebar.checkbox("Use bundled sample data instead", value=False)
+sep_opt = st.sidebar.selectbox("Separator", options=[",", "\t"], index=0)
 
 if use_sample or uploaded is None:
-    # sample small dataset
     sample = pd.DataFrame({
         "Review": [
             "I love this place",
@@ -59,198 +60,204 @@ if use_sample or uploaded is None:
             "Not bad could be better",
             "Absolutely fantastic experience",
             "Terrible service and boring food",
-            "I really enjoyed it"
+            "I really enjoyed it",
+            "Food was cold when served",
+            "Highly unhygienic staff"
         ],
-        "Liked": [1, 0, 1, 1, 0, 1]
+        "Liked": [1, 0, 1, 1, 0, 1, 0, 0]
     })
     df = sample
-    st.sidebar.info("Using bundled sample data. Upload your file or uncheck this to use your file.")
+    st.sidebar.info("Using built-in sample. Upload a file to use your dataset.")
 else:
     try:
-        df = pd.read_csv(uploaded, sep=sep_choice)
+        df = pd.read_csv(uploaded, sep=sep_opt)
     except Exception as e:
-        st.sidebar.error(f"Failed to read uploaded file: {e}")
+        st.sidebar.error(f"Failed to read file: {e}")
         st.stop()
 
-st.sidebar.markdown("### Column selection")
-col_text = None
-col_label = None
-if not df.empty:
-    cols = df.columns.tolist()
-    col_text = st.sidebar.selectbox("Text column (review)", options=cols, index=0)
-    col_label = st.sidebar.selectbox("Label column (binary 0/1)", options=cols, index=min(1, len(cols)-1))
-else:
-    st.sidebar.warning("No data loaded yet.")
-
-st.sidebar.markdown("### Tokenizer / Model")
-MAX_VOCAB = st.sidebar.number_input("Max vocabulary (num_words)", min_value=1000, max_value=50000, value=10000, step=500)
-MAX_LEN = st.sidebar.number_input("Max sequence length (pad/truncate)", min_value=5, max_value=200, value=20, step=1)
-EMBED_DIM = st.sidebar.number_input("Embedding dimension", min_value=8, max_value=256, value=32, step=8)
-RNN_UNITS = st.sidebar.number_input("RNN units", min_value=8, max_value=256, value=32, step=8)
-EPOCHS = st.sidebar.number_input("Epochs", min_value=1, max_value=50, value=8, step=1)
-BATCH = st.sidebar.number_input("Batch size", min_value=8, max_value=512, value=32, step=8)
-random_state = st.sidebar.number_input("Random state", value=42, step=1)
-
-# ---------------------------
-# Show data preview and column mapping
-# ---------------------------
 st.subheader("Data preview")
-st.write("Rows:", len(df))
+st.write(f"Rows: {len(df)}")
 st.dataframe(df.head(10))
 
-if col_text is None or col_label is None:
-    st.error("Please select both text and label columns in the sidebar.")
-    st.stop()
+# column selectors
+cols = df.columns.tolist()
+text_col = st.sidebar.selectbox("Text column", options=cols, index=0)
+label_col = st.sidebar.selectbox("Label column (binary 0/1)", options=cols, index=min(1, len(cols)-1))
 
-# ---------------------------
-# Preprocess & prepare
-# ---------------------------
-st.subheader("Prepare dataset")
-with st.spinner("Cleaning and preparing data..."):
-    # convert
-    df[col_text] = df[col_text].astype(str).apply(clean_text)
-    # try to coerce labels to int 0/1
+# model params
+test_size = st.sidebar.slider("Test set fraction", 0.1, 0.5, 0.3, 0.05)
+random_state = int(st.sidebar.number_input("Random state", value=42, step=1))
+
+# ---- Prepare data ----
+if st.button("Preprocess & Split"):
+    df["_clean_text_"] = df[text_col].astype(str).apply(preprocess)
+    # coerce labels to integers 0/1
     try:
-        df[col_label] = pd.to_numeric(df[col_label], errors='coerce')
+        df[label_col] = pd.to_numeric(df[label_col], errors="coerce")
     except Exception:
-        df[col_label] = df[col_label].astype(str).map(lambda x: 1 if str(x).lower() in ("1","yes","y","true","positive","pos") else 0)
-    # drop rows with NaN in label
+        df[label_col] = df[label_col].astype(str).map(lambda x: 1 if str(x).lower() in ("1","yes","y","true","positive","pos") else 0)
     n_before = len(df)
-    df = df.dropna(subset=[col_label])
-    n_after = len(df)
-    if n_after < n_before:
-        st.warning(f"Dropped {n_before-n_after} rows with missing labels after coercion.")
+    df = df.dropna(subset=[label_col])
+    if len(df) < n_before:
+        st.warning(f"Dropped {n_before-len(df)} rows with missing labels after coercion.")
+    df[label_col] = df[label_col].round().astype(int)
 
-    # Ensure binary labels; if more than two unique values warn
-    unique_labels = sorted(df[col_label].unique().tolist())
-    if len(unique_labels) > 2:
-        st.warning(f"Label column has more than 2 unique values: {unique_labels}. They will be coerced to 0/1 via rounding.")
-        df[col_label] = df[col_label].round().astype(int)
+    st.write("Label distribution:")
+    st.write(df[label_col].value_counts())
+
+    # Vectorize
+    vectorizer = TfidfVectorizer()
+    X = vectorizer.fit_transform(df["_clean_text_"])
+    y = df[label_col].values
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=float(test_size), random_state=random_state, stratify=y if len(np.unique(y))>1 else None)
+
+    # store in session
+    st.session_state["vectorizer"] = vectorizer
+    st.session_state["X_train"] = X_train
+    st.session_state["X_test"] = X_test
+    st.session_state["y_train"] = y_train
+    st.session_state["y_test"] = y_test
+    st.success("Preprocessing and split completed. Ready to train models.")
+
+# ---- Train models ----
+def train_and_eval(model, X_train, y_train, X_test, y_test):
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred, digits=4)
+    return model, acc, report
+
+st.subheader("Train models")
+if st.button("Train LogisticRegression, NaiveBayes, SVC"):
+    if not all(k in st.session_state for k in ("vectorizer","X_train","X_test","y_train","y_test")):
+        st.warning("Run 'Preprocess & Split' first.")
     else:
-        df[col_label] = df[col_label].astype(int)
+        X_train = st.session_state["X_train"]
+        X_test = st.session_state["X_test"]
+        y_train = st.session_state["y_train"]
+        y_test = st.session_state["y_test"]
 
-st.write("Label distribution:")
-st.write(df[col_label].value_counts())
+        with st.spinner("Training LogisticRegression..."):
+            lr = LogisticRegression(max_iter=1000)
+            lr, lr_acc, lr_report = train_and_eval(lr, X_train, y_train, X_test, y_test)
+            st.write("LogisticRegression — Accuracy:", lr_acc)
+            st.text(lr_report)
+            st.session_state["lr_model"] = lr
 
-# ---------------------------
-# Tokenizer fit & dataset split
-# ---------------------------
-if st.button("Prepare tokenizer & split data"):
-    X = df[col_text]
-    y = df[col_label]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=int(random_state), stratify=y if len(y.unique())>1 else None)
-    tok = Tokenizer(num_words=int(MAX_VOCAB), oov_token="<OOV>")
-    tok.fit_on_texts(X_train)
-    Xtr = to_padded(X_train, tok, int(MAX_LEN))
-    Xte = to_padded(X_test, tok, int(MAX_LEN))
-    ytr = y_train.values
-    yte = y_test.values
+        with st.spinner("Training MultinomialNB..."):
+            nb = MultinomialNB()
+            nb, nb_acc, nb_report = train_and_eval(nb, X_train, y_train, X_test, y_test)
+            st.write("MultinomialNB — Accuracy:", nb_acc)
+            st.text(nb_report)
+            st.session_state["nb_model"] = nb
 
-    st.success("Tokenizer and split ready.")
-    st.write("Training samples:", Xtr.shape[0], "Validation/Test samples:", Xte.shape[0])
-    st.write("Vocabulary (fitted):", min(int(MAX_VOCAB), len(tok.word_index)+1))
-    # store in session_state for later training/predict
-    st.session_state['tok'] = tok
-    st.session_state['Xtr'] = Xtr
-    st.session_state['Xte'] = Xte
-    st.session_state['ytr'] = ytr
-    st.session_state['yte'] = yte
+        with st.spinner("Training SVC (linear)..."):
+            svc = SVC(kernel="linear", probability=True)
+            svc, svc_acc, svc_report = train_and_eval(svc, X_train, y_train, X_test, y_test)
+            st.write("SVC — Accuracy:", svc_acc)
+            st.text(svc_report)
+            st.session_state["svc_model"] = svc
 
-# ---------------------------
-# Build & train model
-# ---------------------------
-st.subheader("Build & Train Model")
-if 'tok' in st.session_state:
-    if st.button("Build & Train model"):
-        tok = st.session_state['tok']
-        Xtr = st.session_state['Xtr']
-        Xte = st.session_state['Xte']
-        ytr = st.session_state['ytr']
-        yte = st.session_state['yte']
+        st.success("Training finished and models saved to session.")
 
-        vocab_size = min(int(MAX_VOCAB), len(tok.word_index) + 1)
-        model = Sequential([
-            Embedding(input_dim=vocab_size, output_dim=int(EMBED_DIM), input_length=int(MAX_LEN), mask_zero=True),
-            SimpleRNN(int(RNN_UNITS)),
-            Dense(1, activation="sigmoid")
-        ])
-        model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
-        st.write("Model summary:")
-        model.summary(print_fn=lambda s: st.text(s))
+# ---- Line-by-line predictions ----
+st.subheader("Predict line-by-line sentences")
+st.markdown("Enter one sentence per line. Predictions will be shown for all trained models.")
+input_text = st.text_area("Sentences (one per line)", value="The food was great\nService was terrible\nNot happy with the price")
 
-        progress_bar = st.progress(0.0)
-        status = st.empty()
-        cb = StreamlitProgress(progress_bar, status)
-
-        # Train
-        history = model.fit(
-            Xtr, ytr,
-            epochs=int(EPOCHS),
-            batch_size=int(BATCH),
-            validation_split=0.2,
-            callbacks=[cb],
-            verbose=0
-        )
-
-        loss, acc = model.evaluate(Xte, yte, verbose=0)
-        st.success(f"Test accuracy: {acc:.4f}   Test loss: {loss:.4f}")
-
-        # save to session
-        st.session_state['model'] = model
-        st.session_state['history'] = history.history
-else:
-    st.info("Click 'Prepare tokenizer & split data' first.")
-
-# ---------------------------
-# Predictions / Demo
-# ---------------------------
-st.subheader("Predict — try examples or custom text")
-if 'model' in st.session_state and 'tok' in st.session_state:
-    model = st.session_state['model']
-    tok = st.session_state['tok']
-
-    # Multi-line input: one sentence per line
-    st.markdown("**Custom Input (one sentence per line)**")
-    user_input = st.text_area("Enter sentences (each on a new line)", 
-                              value="The food was amazing\nThe service was bad")
-
-    if st.button("Predict Sentences"):
-        sentences = [line.strip() for line in user_input.split("\n") if line.strip()]
-        if sentences:
-            pads = to_padded([clean_text(s) for s in sentences], tok, int(MAX_LEN))
-            probs = model.predict(pads, verbose=0).ravel()
-            labels = ["positive" if p >= 0.5 else "negative" for p in probs]
-            results = pd.DataFrame({
-                "Sentence": sentences,
-                "Probability": probs,
-                "Prediction": labels
-            })
-            st.dataframe(results)
+if st.button("Predict Sentences"):
+    sentences = [s.strip() for s in input_text.split("\n") if s.strip()]
+    if len(sentences) == 0:
+        st.warning("Enter at least one non-empty sentence.")
+    else:
+        if "vectorizer" not in st.session_state:
+            st.warning("You must run 'Preprocess & Split' (to fit vectorizer) and train models before prediction.")
         else:
-            st.warning("Please enter at least one sentence.")
-else:
-    st.info("Train a model first to enable prediction demo.")
+            vectorizer = st.session_state["vectorizer"]
+            X_new = vectorizer.transform([preprocess(s) for s in sentences])
 
+            results = {"Sentence": sentences}
+            # LogisticRegression
+            if "lr_model" in st.session_state:
+                lr = st.session_state["lr_model"]
+                probs = lr.predict_proba(X_new)[:,1] if hasattr(lr, "predict_proba") else lr.decision_function(X_new)
+                preds = lr.predict(X_new)
+                results["LogReg_prob"] = [float(round(p,4)) for p in (probs.tolist() if hasattr(probs,'tolist') else probs)]
+                results["LogReg_pred"] = ["Positive" if int(p)==1 else "Negative" for p in preds]
+            else:
+                results["LogReg_pred"] = ["(not trained)"]*len(sentences)
 
-# ---------------------------
-# Optional: show training history
-# ---------------------------
-st.subheader("Training history (if available)")
-if 'history' in st.session_state:
-    hist = st.session_state['history']
-    st.write(hist)
-else:
-    st.write("No history available.")
+            # Naive Bayes
+            if "nb_model" in st.session_state:
+                nb = st.session_state["nb_model"]
+                probs = nb.predict_proba(X_new)[:,1]
+                preds = nb.predict(X_new)
+                results["NB_prob"] = [float(round(p,4)) for p in probs.tolist()]
+                results["NB_pred"] = ["Positive" if int(p)==1 else "Negative" for p in preds]
+            else:
+                results["NB_pred"] = ["(not trained)"]*len(sentences)
 
-# ---------------------------
-# Notes
-# ---------------------------
+            # SVC
+            if "svc_model" in st.session_state:
+                svc = st.session_state["svc_model"]
+                # SVC probability requires probability=True during training (we set it). If not available, fallback to decision_function
+                if hasattr(svc, "predict_proba"):
+                    probs = svc.predict_proba(X_new)[:,1]
+                else:
+                    probs = svc.decision_function(X_new)
+                    # scale decision_function to 0..1 for display (sigmoid)
+                    probs = 1/(1+np.exp(-probs))
+                preds = svc.predict(X_new)
+                results["SVC_prob"] = [float(round(p,4)) for p in probs.tolist()]
+                results["SVC_pred"] = ["Positive" if int(p)==1 else "Negative" for p in preds]
+            else:
+                results["SVC_pred"] = ["(not trained)"]*len(sentences)
+
+            res_df = pd.DataFrame(results)
+            st.dataframe(res_df)
+
+# ---- Save / Load model (optional) ----
+st.subheader("Save / Load")
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("Save models & vectorizer to disk (pickle)"):
+        import joblib, os
+        if "vectorizer" not in st.session_state:
+            st.warning("Nothing to save. Fit vectorizer and train models first.")
+        else:
+            out_dir = st.text_input("Output directory (relative)", value="model_artifacts")
+            os.makedirs(out_dir, exist_ok=True)
+            joblib.dump(st.session_state["vectorizer"], f"{out_dir}/vectorizer.joblib")
+            for name in ("lr_model","nb_model","svc_model"):
+                if name in st.session_state:
+                    joblib.dump(st.session_state[name], f"{out_dir}/{name}.joblib")
+            st.success(f"Saved artifacts to {out_dir}")
+
+with col2:
+    if st.button("Load models & vectorizer from disk (pickle)"):
+        import joblib, os
+        in_dir = st.text_input("Input directory (relative)", value="model_artifacts")
+        try:
+            st.session_state["vectorizer"] = joblib.load(f"{in_dir}/vectorizer.joblib")
+            for name in ("lr_model","nb_model","svc_model"):
+                path = f"{in_dir}/{name}.joblib"
+                try:
+                    st.session_state[name] = joblib.load(path)
+                except Exception:
+                    st.warning(f"Could not load {path}")
+            st.success("Loaded artifacts (if present).")
+        except FileNotFoundError:
+            st.error("Directory or files not found.")
+
+# ---- Notes ----
 st.markdown("---")
-st.markdown("**Notes:**")
-st.markdown("""
-- Select the correct text and label columns from the sidebar; different datasets name columns differently.
-- Labels are coerced to integers (0/1). Common true values `1, yes, y, true, positive` will be interpreted as 1.
-- Training inside Streamlit runs in the foreground and may take time depending on data size and epochs. For large datasets, prefer training offline or reduce `MAX_LEN`, `EPOCHS`, and `BATCH`.
-- This is a simple RNN demo for education and small datasets. For better performance use LSTM/GRU, dropout, regularization, or pretrained embeddings.
-""")
+st.markdown(
+    """
+- This app preprocesses text with lowercasing, punctuation & number removal, stopword filtering (keeps negations), and Porter stemming.
+- Vectorization uses TF-IDF fitted during 'Preprocess & Split'.
+- Train all three models using the 'Train' button. Predictions require the vectorizer + trained models in session.
+- For large datasets, reduce TF-IDF dimension limits or train outside Streamlit.
+"""
+)
 
