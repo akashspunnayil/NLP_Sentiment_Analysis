@@ -1,6 +1,6 @@
 # Sentiment Analysis App (Streamlit + RNN)
 
-[View App](https://sentiment-analysis-app.streamlit.app)
+[View App](https://sentiment-nlp-app.streamlit.app)
 
 This Streamlit app uses a SimpleRNN (Recurrent Neural Network) to perform sentiment classification on text reviews. It provides a user-friendly interface for training, evaluating, and testing sentiment predictions on custom datasets.
 

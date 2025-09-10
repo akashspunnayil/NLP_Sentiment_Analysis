@@ -1,6 +1,6 @@
-protobuf==3.20.3
-streamlit
-pandas
-numpy
-scikit-learn
-tensorflow
+streamlit==1.38.0
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.1
+joblib==1.5.2
+nltk==3.9.0
