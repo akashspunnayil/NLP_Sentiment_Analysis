@@ -17,32 +17,21 @@ import numpy as np
 import joblib
 import os
 '''
-# --- NLTK-safe imports and data download ---
+
+
+# --- Force NLTK to use bundled nltk_data folder (if present) ---
+import os
+HERE = os.path.dirname(__file__)
+os.environ.setdefault("NLTK_DATA", os.path.join(HERE, "nltk_data"))
+
+# --- Regular imports ---
 import streamlit as st
 import pandas as pd
 import re
 import string
 import numpy as np
-import os
 
 import nltk
-
-NLTK_REQUIRED = ["punkt", "stopwords", "wordnet", "omw-1.4"]
-
-for res in NLTK_REQUIRED:
-    try:
-        nltk.data.find(res)
-    except LookupError:
-        try:
-            nltk.download(res, quiet=True)
-        except Exception as e:
-            st.error(
-                f"Failed to download NLTK resource '{res}'. "
-                "If you are deploying to a restricted environment, pre-install NLTK data "
-                "or include required corpora in your build. Error: " + str(e)
-            )
-            st.stop()
-
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 
