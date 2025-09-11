@@ -25,7 +25,6 @@ from sklearn.svm import SVC
 from sklearn.metrics import classification_report, accuracy_score
 import joblib
 
-
 # --- Keras / TF for BiLSTM (add near other imports) ---
 try:
     import tensorflow as tf
@@ -38,9 +37,8 @@ except Exception as e:
     tf = None
     # We'll check tf later before training/predicting
 
-
 st.set_page_config(page_title="Sentiment Analysis (TF-IDF + ML)", layout="wide")
-st.title("Sentiment Analysis — TF-IDF + ML (LogReg, NB, SVC)")
+st.title("Sentiment Analysis — TF-IDF + ML (LogReg, NB, SVC, BiLSTM)")
 
 # ---- ensure NLTK resources ----
 with st.spinner("Checking NLTK data..."):
@@ -75,7 +73,6 @@ st.sidebar.header("Data & Settings")
 uploaded = st.sidebar.file_uploader("Upload CSV or TSV", type=["csv", "tsv", "txt"])
 use_sample = st.sidebar.checkbox("Use built-in sample", value=False)
 
-# friendly separator labels visible to user
 sep_label = st.sidebar.selectbox(
     "Separator",
     options=["Comma (,)", "Tab (\\t)", "Semicolon (;)"],
@@ -89,7 +86,6 @@ elif sep_label.startswith("Tab"):
 else:
     sep_opt = ";"
 
-# New: option to apply preprocessing or not
 apply_preprocess = st.sidebar.checkbox(
     "Apply preprocessing to text",
     value=True,
@@ -100,6 +96,11 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("Model / split settings")
 test_size = st.sidebar.slider("Test set fraction", 0.1, 0.5, 0.3, 0.05)
 random_state = int(st.sidebar.number_input("Random state", value=42, step=1))
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("Save / Load artifacts")
+artifact_dir_default = "model_artifacts"
+artifact_dir_input = st.sidebar.text_input("Artifacts directory (relative)", value=artifact_dir_default)
 
 # ---- Load data ----
 if use_sample or uploaded is None:
@@ -131,7 +132,6 @@ st.subheader("Data preview")
 st.write(f"Rows: {len(df)}")
 st.dataframe(df.head(10))
 
-# column selectors
 cols = df.columns.tolist()
 if len(cols) == 0:
     st.error("No columns detected in the uploaded file.")
@@ -140,97 +140,74 @@ if len(cols) == 0:
 text_col = st.sidebar.selectbox("Text column", options=cols, index=0)
 label_col = st.sidebar.selectbox("Label column", options=cols, index=min(1, len(cols)-1))
 
-# Show unique labels and let user choose which labels to include
 unique_labels = sorted(df[label_col].dropna().unique().tolist())
 st.sidebar.markdown("Select labels to include (from data)")
 if len(unique_labels) == 0:
     st.sidebar.warning("No labels found in the selected label column.")
     selected_labels = []
 else:
-    # default: select all
     selected_labels = st.sidebar.multiselect("Pick labels", options=unique_labels, default=unique_labels)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("Save / Load artifacts")
-artifact_dir_default = "model_artifacts"
-artifact_dir_input = st.sidebar.text_input("Artifacts directory (relative)", value=artifact_dir_default)
 
 # ---- Prepare data ----
 if st.button("Preprocess & Split"):
-    # filter to selected labels if any chosen
     if selected_labels:
         df_work = df[df[label_col].isin(selected_labels)].copy()
         if df_work.empty:
             st.error("No rows match the selected labels. Pick different labels or check your data.")
             st.stop()
     else:
-        df_work = df.copy()  # no filtering if user didn't pick labels
+        df_work = df.copy()
 
-    # apply or skip preprocessing
     if apply_preprocess:
         df_work["_clean_text_"] = df_work[text_col].astype(str).apply(preprocess)
     else:
         df_work["_clean_text_"] = df_work[text_col].astype(str)
 
-    # drop rows with missing labels
     n_before = len(df_work)
     df_work = df_work.dropna(subset=[label_col])
     if len(df_work) < n_before:
         st.warning(f"Dropped {n_before-len(df_work)} rows with missing labels.")
-    # keep labels as-is (string or numeric) for multi-class
     labels_series = df_work[label_col]
 
     st.write("Label distribution (after filtering):")
     st.write(labels_series.value_counts())
-'''
-    # Vectorize
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(df_work["_clean_text_"])
-    y = labels_series.values
-
-    # split
-    try:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
-            y,
-            test_size=float(test_size),
-            random_state=random_state,
-            stratify=y if len(np.unique(y)) > 1 else None
-        )
-    except ValueError as e:
-        st.error(f"Error during train-test split: {e}")
-        st.stop()
-
-    # store artifacts in session
-    st.session_state["vectorizer"] = vectorizer
-    st.session_state["X_train"] = X_train
-    st.session_state["X_test"] = X_test
-    st.session_state["y_train"] = y_train
-    st.session_state["y_test"] = y_test
-    st.session_state["apply_preprocess"] = bool(apply_preprocess)
-    st.session_state["selected_labels"] = selected_labels
-    st.success("Preprocessing and split completed. Ready to train models.")
-'''
-
 
     # --- Vectorize for TF-IDF (existing) ---
     vectorizer = TfidfVectorizer()
     X = vectorizer.fit_transform(df_work["_clean_text_"])
 
     # --- Also prepare tokenizer + sequences for BiLSTM (new) ---
-    # Tunable params (these could be pulled to sidebar if you want)
     vocab_size = 20000
     maxlen = 128
     oov_token = "<OOV>"
 
-    tokenizer = Tokenizer(num_words=vocab_size, oov_token=oov_token)
-    tokenizer.fit_on_texts(df_work["_clean_text_"])
-    sequences = tokenizer.texts_to_sequences(df_work["_clean_text_"])
-    X_seq = pad_sequences(sequences, maxlen=maxlen, padding='post', truncating='post')
+    # Tokenizer class exists only if TF imported successfully; handle gracefully
+    if tf is None:
+        # Attempt to import Tokenizer from keras.preprocessing.text if TF not available
+        try:
+            from keras.preprocessing.text import Tokenizer as KerasTokenizer
+            from keras.preprocessing.sequence import pad_sequences as keras_pad_sequences
+            TokenizerLocal = KerasTokenizer
+            pad_sequences_local = keras_pad_sequences
+        except Exception:
+            TokenizerLocal = None
+            pad_sequences_local = None
+    else:
+        TokenizerLocal = Tokenizer
+        pad_sequences_local = pad_sequences
+
+    if TokenizerLocal is None:
+        tokenizer = None
+        X_seq = None
+    else:
+        tokenizer = TokenizerLocal(num_words=vocab_size, oov_token=oov_token)
+        tokenizer.fit_on_texts(df_work["_clean_text_"])
+        sequences = tokenizer.texts_to_sequences(df_work["_clean_text_"])
+        X_seq = pad_sequences_local(sequences, maxlen=maxlen, padding='post', truncating='post')
 
     y = labels_series.values
 
-    # split for TF-IDF (existing)
+    # split for TF-IDF
     try:
         X_train, X_test, y_train, y_test = train_test_split(
             X,
@@ -243,20 +220,23 @@ if st.button("Preprocess & Split"):
         st.error(f"Error during train-test split: {e}")
         st.stop()
 
-    # split for sequences (BiLSTM) — keep same random state & stratify
-    try:
-        Xs_train, Xs_test, ys_train, ys_test = train_test_split(
-            X_seq,
-            y,
-            test_size=float(test_size),
-            random_state=random_state,
-            stratify=y if len(np.unique(y)) > 1 else None
-        )
-    except ValueError as e:
-        st.error(f"Error during sequence train-test split: {e}")
-        st.stop()
+    # split for sequences (BiLSTM)
+    if X_seq is not None:
+        try:
+            Xs_train, Xs_test, ys_train, ys_test = train_test_split(
+                X_seq,
+                y,
+                test_size=float(test_size),
+                random_state=random_state,
+                stratify=y if len(np.unique(y)) > 1 else None
+            )
+        except ValueError as e:
+            st.error(f"Error during sequence train-test split: {e}")
+            st.stop()
+    else:
+        Xs_train = Xs_test = ys_train = ys_test = None
 
-    # store artifacts in session (add tokenizer/sequences)
+    # store artifacts
     st.session_state["vectorizer"] = vectorizer
     st.session_state["X_train"] = X_train
     st.session_state["X_test"] = X_test
@@ -283,7 +263,7 @@ def train_and_eval(model, X_train, y_train, X_test, y_test):
     return model, acc, report
 
 st.subheader("Train models")
-if st.button("Train LogisticRegression, NaiveBayes, SVC"):
+if st.button("Train LogisticRegression, NaiveBayes, SVC, BiLSTM"):
     if not all(k in st.session_state for k in ("vectorizer", "X_train", "X_test", "y_train", "y_test")):
         st.warning("Run 'Preprocess & Split' first.")
     else:
@@ -312,53 +292,66 @@ if st.button("Train LogisticRegression, NaiveBayes, SVC"):
             st.write("SVC — Accuracy:", svc_acc)
             st.text(svc_report)
             st.session_state["svc_model"] = svc
-            
-        with st.spinner("Training Bidirectional LSTM (BiLSTM)..."):    
-            # --- Train BiLSTM (if TF available) ---
+
+        # BiLSTM training
+        with st.spinner("Training Bidirectional LSTM (BiLSTM)..."):
             if tf is None:
                 st.warning("TensorFlow not available in this environment — skipping BiLSTM training.")
             else:
-                with st.spinner("Training BiLSTM..."):
-                    try:
-                        # fetch sequence training data
-                        Xs_train = st.session_state["Xs_train"]
-                        Xs_test = st.session_state["Xs_test"]
-                        ys_train = st.session_state["ys_train"]
-                        ys_test = st.session_state["ys_test"]
-                        seq_params = st.session_state.get("seq_params", {})
-                        vocab_size = seq_params.get("vocab_size", 20000)
-                        maxlen = seq_params.get("maxlen", 128)
-    
+                try:
+                    Xs_train = st.session_state.get("Xs_train")
+                    Xs_test = st.session_state.get("Xs_test")
+                    ys_train = st.session_state.get("ys_train")
+                    ys_test = st.session_state.get("ys_test")
+                    seq_params = st.session_state.get("seq_params", {})
+                    vocab_size = seq_params.get("vocab_size", 20000)
+                    maxlen = seq_params.get("maxlen", 128)
+
+                    if Xs_train is None or ys_train is None:
+                        st.warning("No sequence training data available. Run 'Preprocess & Split' with Tokenizer available.")
+                    else:
                         embed_dim = 100
                         lstm_units = 128
                         batch_size = 64
                         epochs = 6
-    
-                        bilstm = Sequential([
-                            Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=maxlen),
-                            Bidirectional(LSTM(lstm_units, return_sequences=False)),
-                            Dropout(0.4),
-                            Dense(64, activation='relu'),
-                            Dropout(0.2),
-                            Dense(1, activation='sigmoid')  # binary; for multi-class replace accordingly
-                        ])
-    
-                        bilstm.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
-                        es = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
-    
-                        # If multi-class labels are present (more than 2 classes), user must adapt model final layer and loss
+
                         n_classes = len(np.unique(ys_train))
                         if n_classes > 2:
-                            st.warning("Detected multi-class labels. Current BiLSTM block is configured for binary labels. Convert labels to integer 0/1 or ask me to provide a multiclass block.")
-                        else:
+                            # multiclass setup
+                            bilstm = Sequential([
+                                Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=maxlen),
+                                Bidirectional(LSTM(lstm_units, return_sequences=False)),
+                                Dropout(0.4),
+                                Dense(64, activation='relu'),
+                                Dropout(0.2),
+                                Dense(n_classes, activation='softmax')
+                            ])
+                            bilstm.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
                             history = bilstm.fit(Xs_train, ys_train, validation_split=0.1, epochs=epochs,
-                                                 batch_size=batch_size, callbacks=[es], verbose=0)
+                                                 batch_size=batch_size, callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)], verbose=0)
                             loss, acc = bilstm.evaluate(Xs_test, ys_test, verbose=0)
-                            st.write(f"BiLSTM — Accuracy: {acc:.4f}")
-                            st.session_state["bilstm_model"] = bilstm
-                    except KeyError:
-                        st.error("Sequence training data not found in session. Run 'Preprocess & Split' first.")
-                    
+                            st.write(f"BiLSTM (multiclass) — Accuracy: {acc:.4f}")
+                        else:
+                            # binary setup
+                            bilstm = Sequential([
+                                Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=maxlen),
+                                Bidirectional(LSTM(lstm_units, return_sequences=False)),
+                                Dropout(0.4),
+                                Dense(64, activation='relu'),
+                                Dropout(0.2),
+                                Dense(1, activation='sigmoid')
+                            ])
+                            bilstm.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+                            history = bilstm.fit(Xs_train, ys_train, validation_split=0.1, epochs=epochs,
+                                                 batch_size=batch_size, callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)], verbose=0)
+                            loss, acc = bilstm.evaluate(Xs_test, ys_test, verbose=0)
+                            st.write(f"BiLSTM (binary) — Accuracy: {acc:.4f}")
+
+                        st.session_state["bilstm_model"] = bilstm
+                except KeyError:
+                    st.error("Sequence training data not found in session. Run 'Preprocess & Split' first.")
+                except Exception as e:
+                    st.error(f"BiLSTM training failed: {e}")
 
         st.success("Training finished and models saved to session.")
 
@@ -367,7 +360,6 @@ st.subheader("Predict line-by-line sentences")
 st.markdown("Enter one sentence per line. Predictions will be shown for all trained models.")
 input_text = st.text_area("Sentences (one per line)", value="The food was great\nService was terrible\nNot happy with the price")
 
-# show current preprocess mode (from session if set, else sidebar value)
 current_pre_flag = st.session_state.get("apply_preprocess", apply_preprocess)
 st.caption(f"Using preprocessing: {current_pre_flag}")
 
@@ -389,32 +381,26 @@ if st.button("Predict Sentences"):
 
             results = {"Sentence": sentences}
 
-            # helper to add per-class probs and preds
+            # helper to add per-class probs and preds (classical models)
             def add_model_outputs(name, model):
                 if model is None:
                     results[f"{name}_pred"] = ["(not trained)"] * len(sentences)
                     return
-                # predictions
                 preds = model.predict(X_new)
                 results[f"{name}_pred"] = preds.tolist()
-                # probabilities if available -> multi-class support
                 if hasattr(model, "predict_proba"):
-                    probs = model.predict_proba(X_new)  # shape n_samples x n_classes
+                    probs = model.predict_proba(X_new)
                     classes = model.classes_
                     for i, cls in enumerate(classes):
                         col = f"{name}_prob_{cls}"
                         results[col] = [float(round(v, 4)) for v in probs[:, i].tolist()]
                 else:
-                    # fallback: decision_function -> convert to pseudo-prob using sigmoid for binary,
-                    # or softmax-like scaling for multi-class
                     try:
                         dfun = model.decision_function(X_new)
                         if dfun.ndim == 1:
-                            # binary: sigmoid
                             probs = 1 / (1 + np.exp(-dfun))
                             results[f"{name}_prob_1"] = [float(round(v, 4)) for v in probs.tolist()]
                         else:
-                            # multi-class: softmax
                             exp = np.exp(dfun - np.max(dfun, axis=1, keepdims=True))
                             sm = exp / np.sum(exp, axis=1, keepdims=True)
                             classes = model.classes_
@@ -422,45 +408,52 @@ if st.button("Predict Sentences"):
                                 col = f"{name}_prob_{cls}"
                                 results[col] = [float(round(v, 4)) for v in sm[:, i].tolist()]
                     except Exception:
-                        # no probabilities available
                         pass
 
-
-            # --- BiLSTM predictions (sequence-based) ---
+            # robust BiLSTM predictions
             def add_bilstm_outputs(name, model, tokenizer, maxlen=128):
                 if model is None or tokenizer is None:
                     results[f"{name}_pred"] = ["(not trained)"] * len(sentences)
                     return
-                # prepare sequences (respect preprocessing choice)
                 texts = [preprocess(s) for s in sentences] if use_pre else [str(s) for s in sentences]
                 seqs = tokenizer.texts_to_sequences(texts)
                 padded = pad_sequences(seqs, maxlen=maxlen, padding='post', truncating='post')
                 try:
                     probs = model.predict(padded)
                 except Exception:
-                    # fallback if model cannot predict for some reason
                     results[f"{name}_pred"] = ["(error)"] * len(sentences)
                     return
-            
+
                 probs = np.array(probs)
-                # If model outputs shape (n,) convert to (n,1)
                 if probs.ndim == 1:
                     probs = probs.reshape((-1, 1))
-            
-                # If multiclass (n_classes>1) -> pick argmax as prediction and provide per-class probs
+
                 if probs.shape[1] > 1:
                     preds = probs.argmax(axis=1).tolist()
                     results[f"{name}_pred"] = preds
-                    # give probs per class
                     for cls_i in range(probs.shape[1]):
                         results[f"{name}_prob_{cls_i}"] = [float(round(x, 4)) for x in probs[:, cls_i].tolist()]
                 else:
-                    # binary: probs[:,0] is probability for positive class if model was trained that way
                     probs1 = probs[:, 0].tolist()
                     preds = [1 if p >= 0.5 else 0 for p in probs1]
                     results[f"{name}_pred"] = preds
                     results[f"{name}_prob_1"] = [float(round(p, 4)) for p in probs1]
 
+            # call classical model outputs
+            add_model_outputs("LogReg", st.session_state.get("lr_model"))
+            add_model_outputs("NB", st.session_state.get("nb_model"))
+            add_model_outputs("SVC", st.session_state.get("svc_model"))
+
+            # call BiLSTM outputs
+            add_bilstm_outputs(
+                "BiLSTM",
+                st.session_state.get("bilstm_model"),
+                st.session_state.get("tokenizer"),
+                maxlen=st.session_state.get("seq_params", {}).get("maxlen", 128)
+            )
+
+            res_df = pd.DataFrame(results)
+            st.dataframe(res_df)
 
 # ---- Save / Load model (optional) ----
 st.subheader("Save / Load")
@@ -468,11 +461,9 @@ st.subheader("Save / Load")
 # Read artifacts directory from sidebar session value (no duplicate widget)
 out_dir_input = st.session_state.get("artifact_dir_input", artifact_dir_input or artifact_dir_default)
 
-import os, io, tempfile, shutil
+import io, tempfile, shutil
 
-# Show where files will be saved (container path)
 st.write("Files saved to (container):", os.path.abspath(out_dir_input))
-# Show contents if folder exists
 if os.path.exists(out_dir_input):
     try:
         st.write("Directory contents:", os.listdir(out_dir_input))
@@ -483,7 +474,6 @@ else:
 
 col1, col2 = st.columns(2)
 
-# LEFT: Save to disk (inside container) + create download buttons
 with col1:
     if st.button("Save models & vectorizer to disk (pickle)", key="save_disk_btn"):
         if "vectorizer" not in st.session_state:
@@ -492,33 +482,27 @@ with col1:
             out_dir = out_dir_input or artifact_dir_default
             os.makedirs(out_dir, exist_ok=True)
 
-            # save TF-IDF vectorizer + classical ML models
             joblib.dump(st.session_state["vectorizer"], f"{out_dir}/vectorizer.joblib")
             for name in ("lr_model", "nb_model", "svc_model"):
                 if name in st.session_state:
                     joblib.dump(st.session_state[name], f"{out_dir}/{name}.joblib")
 
-            # save tokenizer (for BiLSTM) if present
             if "tokenizer" in st.session_state:
                 try:
                     joblib.dump(st.session_state["tokenizer"], f"{out_dir}/tokenizer.joblib")
                 except Exception:
                     st.warning("Failed to save tokenizer via joblib.")
 
-            # save Keras BiLSTM if present
             if "bilstm_model" in st.session_state:
                 bilstm_path = os.path.join(out_dir, "bilstm_model")
                 try:
-                    # prefer SavedModel directory (folder)
                     st.session_state["bilstm_model"].save(bilstm_path, overwrite=True, include_optimizer=False)
                 except Exception:
-                    # fallback: HDF5 single-file
                     try:
                         st.session_state["bilstm_model"].save(f"{out_dir}/bilstm_model.h5", overwrite=True)
                     except Exception as e:
                         st.warning(f"Failed to save BiLSTM model: {e}")
 
-            # metadata
             meta = {
                 "apply_preprocess": bool(st.session_state.get("apply_preprocess", apply_preprocess)),
                 "selected_labels": st.session_state.get("selected_labels", selected_labels),
@@ -528,7 +512,6 @@ with col1:
             st.success(f"Saved artifacts to {out_dir}")
 
     st.markdown("**Download trained artifacts**")
-    # If artifacts exist in session, expose download buttons (in-memory)
     if "vectorizer" in st.session_state:
         buf = io.BytesIO()
         joblib.dump(st.session_state["vectorizer"], buf)
@@ -552,7 +535,6 @@ with col1:
                 key=f"dl_{name}"
             )
 
-    # tokenizer download
     if "tokenizer" in st.session_state:
         buf = io.BytesIO()
         joblib.dump(st.session_state["tokenizer"], buf)
@@ -564,12 +546,10 @@ with col1:
             key="dl_tokenizer"
         )
 
-    # BiLSTM model download: prefer SavedModel zip, fallback to .h5 if present
     if "bilstm_model" in st.session_state:
         out_dir = out_dir_input or artifact_dir_default
         bilstm_folder = os.path.join(out_dir, "bilstm_model")
         bilstm_h5 = os.path.join(out_dir, "bilstm_model.h5")
-        # create a temporary zip of SavedModel folder (works even if folder was just written)
         if os.path.exists(bilstm_folder):
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
             tmp.close()
@@ -600,12 +580,10 @@ with col1:
                 key="dl_bilstm_h5"
             )
 
-# RIGHT: Load from disk into session (mainly useful when running locally)
 with col2:
     if st.button("Load models & vectorizer from disk (pickle)", key="load_disk_btn"):
         in_dir = out_dir_input or artifact_dir_default
         try:
-            # load vectorizer + classical models
             st.session_state["vectorizer"] = joblib.load(f"{in_dir}/vectorizer.joblib")
             for name in ("lr_model", "nb_model", "svc_model"):
                 path = f"{in_dir}/{name}.joblib"
@@ -614,7 +592,6 @@ with col2:
                 except Exception:
                     st.warning(f"Could not load {path}")
 
-            # load metadata if present
             try:
                 meta = joblib.load(f"{in_dir}/meta.joblib")
                 st.session_state["apply_preprocess"] = bool(meta.get("apply_preprocess", apply_preprocess))
@@ -623,14 +600,11 @@ with col2:
             except Exception:
                 pass
 
-            # load tokenizer if present
             try:
                 st.session_state["tokenizer"] = joblib.load(f"{in_dir}/tokenizer.joblib")
             except Exception:
-                # tokenizer not present or invalid
                 pass
 
-            # Try to load Keras model (SavedModel folder preferred)
             try:
                 import tensorflow as _tf
                 bpath = f"{in_dir}/bilstm_model"
@@ -639,7 +613,6 @@ with col2:
                 elif os.path.exists(f"{in_dir}/bilstm_model.h5"):
                     st.session_state["bilstm_model"] = _tf.keras.models.load_model(f"{in_dir}/bilstm_model.h5")
                 else:
-                    # no BiLSTM saved model found
                     pass
             except Exception:
                 st.warning("Could not load BiLSTM model (TensorFlow may not be available or model files corrupted).")
@@ -647,8 +620,6 @@ with col2:
             st.success("Loaded artifacts (if present).")
         except FileNotFoundError:
             st.error("Directory or files not found.")
-
-
 
 # ---- Notes ----
 st.markdown("---")
@@ -660,4 +631,3 @@ st.markdown(
 - Save/Load persists the vectorizer, models and metadata (`apply_preprocess` and `selected_labels`).
 """
 )
-
