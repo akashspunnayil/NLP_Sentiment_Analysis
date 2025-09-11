@@ -1,4 +1,5 @@
 # sentiment_analysis_app.py
+'''
 import streamlit as st
 import pandas as pd
 import re
@@ -15,6 +16,45 @@ from sklearn.metrics import classification_report, accuracy_score
 import numpy as np
 import joblib
 import os
+'''
+# --- NLTK-safe imports and data download ---
+import streamlit as st
+import pandas as pd
+import re
+import string
+import numpy as np
+import os
+
+import nltk
+
+NLTK_REQUIRED = ["punkt", "stopwords", "wordnet", "omw-1.4"]
+
+for res in NLTK_REQUIRED:
+    try:
+        nltk.data.find(res)
+    except LookupError:
+        try:
+            nltk.download(res, quiet=True)
+        except Exception as e:
+            st.error(
+                f"Failed to download NLTK resource '{res}'. "
+                "If you are deploying to a restricted environment, pre-install NLTK data "
+                "or include required corpora in your build. Error: " + str(e)
+            )
+            st.stop()
+
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+
+# remaining imports
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report, accuracy_score
+import joblib
+
 
 st.set_page_config(page_title="Sentiment Analysis (TF-IDF + ML)", layout="wide")
 st.title("Sentiment Analysis — TF-IDF + ML (LogReg, NB, SVC)")
