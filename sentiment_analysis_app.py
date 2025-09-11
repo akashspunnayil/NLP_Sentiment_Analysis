@@ -330,21 +330,34 @@ if st.button("Predict Sentences"):
 
 # ---- Save / Load model (optional) ----
 st.subheader("Save / Load")
-#out_dir_input = st.text_input("Artifacts directory (relative)", value=artifact_dir_input or artifact_dir_default)
+
+# Read artifacts directory from sidebar session value (no duplicate widget)
 out_dir_input = st.session_state.get("artifact_dir_input", artifact_dir_input or artifact_dir_default)
 
-import os
-st.write("Files saved to:", os.path.abspath(out_dir_input))
-st.write("Directory contents:", os.listdir(out_dir_input))
+import os, io
+
+# Show where files will be saved (container path)
+st.write("Files saved to (container):", os.path.abspath(out_dir_input))
+# Show contents if folder exists
+if os.path.exists(out_dir_input):
+    try:
+        st.write("Directory contents:", os.listdir(out_dir_input))
+    except Exception:
+        st.write("Directory exists but could not list contents.")
+else:
+    st.write("Directory does not exist yet (will be created on Save).")
 
 col1, col2 = st.columns(2)
+
+# LEFT: Save to disk (inside container) + create download buttons
 with col1:
-    if st.button("Save models & vectorizer to disk (pickle)"):
+    if st.button("Save models & vectorizer to disk (pickle)", key="save_disk_btn"):
         if "vectorizer" not in st.session_state:
             st.warning("Nothing to save. Fit vectorizer and train models first.")
         else:
             out_dir = out_dir_input or artifact_dir_default
             os.makedirs(out_dir, exist_ok=True)
+            # save artifacts to disk
             joblib.dump(st.session_state["vectorizer"], f"{out_dir}/vectorizer.joblib")
             for name in ("lr_model", "nb_model", "svc_model"):
                 if name in st.session_state:
@@ -356,8 +369,34 @@ with col1:
             joblib.dump(meta, f"{out_dir}/meta.joblib")
             st.success(f"Saved artifacts to {out_dir}")
 
+    st.markdown("**Download trained artifacts**")
+    # If artifacts exist in session, expose download buttons (in-memory)
+    if "vectorizer" in st.session_state:
+        buf = io.BytesIO()
+        joblib.dump(st.session_state["vectorizer"], buf)
+        st.download_button(
+            label="Download Vectorizer",
+            data=buf.getvalue(),
+            file_name="vectorizer.joblib",
+            mime="application/octet-stream",
+            key="dl_vectorizer"
+        )
+
+    for name in ("lr_model", "nb_model", "svc_model"):
+        if name in st.session_state:
+            buf = io.BytesIO()
+            joblib.dump(st.session_state[name], buf)
+            st.download_button(
+                label=f"Download {name}",
+                data=buf.getvalue(),
+                file_name=f"{name}.joblib",
+                mime="application/octet-stream",
+                key=f"dl_{name}"
+            )
+
+# RIGHT: Load from disk into session (mainly useful when running locally)
 with col2:
-    if st.button("Load models & vectorizer from disk (pickle)"):
+    if st.button("Load models & vectorizer from disk (pickle)", key="load_disk_btn"):
         in_dir = out_dir_input or artifact_dir_default
         try:
             st.session_state["vectorizer"] = joblib.load(f"{in_dir}/vectorizer.joblib")
@@ -377,6 +416,7 @@ with col2:
             st.success("Loaded artifacts (if present).")
         except FileNotFoundError:
             st.error("Directory or files not found.")
+
 
 # ---- Notes ----
 st.markdown("---")
