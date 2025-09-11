@@ -330,7 +330,8 @@ if st.button("Predict Sentences"):
 
 # ---- Save / Load model (optional) ----
 st.subheader("Save / Load")
-out_dir_input = st.text_input("Artifacts directory (relative)", value=artifact_dir_input or artifact_dir_default)
+#out_dir_input = st.text_input("Artifacts directory (relative)", value=artifact_dir_input or artifact_dir_default)
+out_dir_input = st.session_state.get("artifact_dir_input", artifact_dir_input or artifact_dir_default)
 
 col1, col2 = st.columns(2)
 with col1:
