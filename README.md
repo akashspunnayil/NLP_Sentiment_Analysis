@@ -6,6 +6,7 @@ This Streamlit app uses a SimpleRNN (Recurrent Neural Network) to perform sentim
 
 ## Objective
 
+
 To classify text reviews (e.g., restaurant reviews) as **positive** or **negative** using a deep learning RNN model with an interactive Streamlit interface.
 
 ## Workflow
