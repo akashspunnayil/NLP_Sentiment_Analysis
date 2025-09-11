@@ -3,7 +3,7 @@
 [View App](https://sentiment-nlp-app.streamlit.app)
 
 
-A step-by-step guide for the **Sentiment Analysis (TF-IDF + ML)** Streamlit app (`sentiment_analysis_app.py`).
+A step-by-step guide for the **Sentiment Analysis (TF-IDF + ML + BiLSTM)** Streamlit app (`sentiment_analysis_app.py`).
 This README explains the app purpose, how it works, how to run it locally and in the cloud, data expectations, UI workflow, and troubleshooting tips.
 
 ---
@@ -185,11 +185,25 @@ If OFF:
 ## 8 — Models, training and evaluation
 
 * **Vectorizer**: `TfidfVectorizer()` (fitted on dataset in the app; configurable extension possible: `max_features`, `ngram_range`, etc.)
+
 * **Models**:
 
   * `LogisticRegression(max_iter=2000)` — supports multi-class by default
   * `MultinomialNB()` — common baseline for text
   * `SVC(kernel='linear', probability=True)` — provides `predict_proba` when `probability=True`
+  * **BiLSTM (Bidirectional LSTM)** — deep learning sequence model trained on padded integer sequences  
+    - **Tokenizer**: `Tokenizer(num_words=20000, oov_token="<OOV>")`  
+    - **Architecture (binary)**:  
+      `Embedding → Bidirectional(LSTM(128)) → Dropout → Dense(64, relu) → Dropout → Dense(1, sigmoid)`  
+    - **Architecture (multi-class)**:  
+      `Embedding → Bidirectional(LSTM(128)) → Dropout → Dense(64, relu) → Dropout → Dense(n_classes, softmax)`  
+    - **Training**: `batch_size=64`, `epochs=6`, `EarlyStopping(patience=2)`  
+    - **Evaluation**: reports precision, recall, f1-score, support (via `classification_report`) in addition to accuracy  
+    - **Outputs**:  
+      - `BiLSTM_pred` → predicted label (0/1 or class index)  
+      - `BiLSTM_prob_*` → predicted probability per class (same style as scikit-learn models)
+
+
 * **Evaluation**:
 
   * Accuracy and `classification_report` (precision/recall/f1 for each class)
