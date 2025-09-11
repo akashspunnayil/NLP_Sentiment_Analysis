@@ -1,4 +1,4 @@
-# Sentiment Analysis App (Streamlit + RNN)
+# Sentiment Analysis App (Streamlit + RNN + BiLSTM)
 
 [View App](https://sentiment-nlp-app.streamlit.app)
 
