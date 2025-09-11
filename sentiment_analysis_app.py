@@ -331,7 +331,7 @@ if st.button("Train LogisticRegression, NaiveBayes, SVC, BiLSTM"):
                                                  batch_size=batch_size, callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)], verbose=0)
                             loss, acc = bilstm.evaluate(Xs_test, ys_test, verbose=0)
                             # st.write(f"BiLSTM (multiclass) — Accuracy: {acc:.4f}")
-                            st.write("BiLSTM (multiclass) — Accuracy:" acc)
+                            st.write("BiLSTM (multiclass) — Accuracy:", acc)
                         else:
                             # binary setup
                             bilstm = Sequential([
@@ -347,7 +347,7 @@ if st.button("Train LogisticRegression, NaiveBayes, SVC, BiLSTM"):
                                                  batch_size=batch_size, callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)], verbose=0)
                             loss, acc = bilstm.evaluate(Xs_test, ys_test, verbose=0)
                             # st.write(f"BiLSTM (binary) — Accuracy: {acc:.4f}")
-                            st.write("BiLSTM (binary) — Accuracy:" acc)
+                            st.write("BiLSTM (binary) — Accuracy:", acc)
 
                         st.session_state["bilstm_model"] = bilstm
                 except KeyError:
