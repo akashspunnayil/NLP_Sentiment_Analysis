@@ -327,11 +327,14 @@ if st.button("Train LogisticRegression, NaiveBayes, SVC, BiLSTM"):
                                 Dense(n_classes, activation='softmax')
                             ])
                             bilstm.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-                            history = bilstm.fit(Xs_train, ys_train, validation_split=0.1, epochs=epochs,
-                                                 batch_size=batch_size, callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)], verbose=0)
-                            loss, acc = bilstm.evaluate(Xs_test, ys_test, verbose=0)
-                            # st.write(f"BiLSTM (multiclass) — Accuracy: {acc:.4f}")
-                            st.write("BiLSTM (multiclass) — Accuracy:", acc)
+                            history = bilstm.fit(
+                                Xs_train, ys_train,
+                                validation_split=0.1,
+                                epochs=epochs,
+                                batch_size=batch_size,
+                                callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)],
+                                verbose=0
+                            )
                         else:
                             # binary setup
                             bilstm = Sequential([
@@ -343,19 +346,65 @@ if st.button("Train LogisticRegression, NaiveBayes, SVC, BiLSTM"):
                                 Dense(1, activation='sigmoid')
                             ])
                             bilstm.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
-                            history = bilstm.fit(Xs_train, ys_train, validation_split=0.1, epochs=epochs,
-                                                 batch_size=batch_size, callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)], verbose=0)
-                            loss, acc = bilstm.evaluate(Xs_test, ys_test, verbose=0)
-                            # st.write(f"BiLSTM (binary) — Accuracy: {acc:.4f}")
-                            st.write("BiLSTM (binary) — Accuracy:", acc)
+                            history = bilstm.fit(
+                                Xs_train, ys_train,
+                                validation_split=0.1,
+                                epochs=epochs,
+                                batch_size=batch_size,
+                                callbacks=[EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)],
+                                verbose=0
+                            )
 
-                        st.session_state["bilstm_model"] = bilstm
+                        # ---- evaluation -> produce sklearn-style classification_report ----
+                        try:
+                            probs = bilstm.predict(Xs_test, verbose=0)
+                        except Exception as e:
+                            st.error(f"Failed to predict with BiLSTM: {e}")
+                            probs = None
+
+                        if probs is None:
+                            st.warning("BiLSTM did not produce predictions; evaluation skipped.")
+                            st.session_state["bilstm_model"] = bilstm
+                        else:
+                            probs = np.array(probs)
+                            # normalize shapes: (n,) -> (n,1)
+                            if probs.ndim == 1:
+                                probs = probs.reshape((-1, 1))
+
+                            # derive y_pred depending on output shape
+                            if probs.shape[1] > 1:
+                                y_pred = probs.argmax(axis=1)
+                            else:
+                                y_pred = (probs[:, 0] >= 0.5).astype(int)
+
+                            y_true = np.array(ys_test)
+
+                            # create sklearn report
+                            from sklearn.metrics import classification_report, accuracy_score
+                            try:
+                                bilstm_acc = accuracy_score(y_true, y_pred)
+                                bilstm_report = classification_report(y_true, y_pred, digits=4)
+                            except Exception as e:
+                                st.error(f"Failed to compute classification report: {e}")
+                                bilstm_acc = None
+                                bilstm_report = None
+
+                            if bilstm_acc is not None:
+                                st.write(f"BiLSTM — Accuracy: {bilstm_acc:.4f}")
+                            if bilstm_report is not None:
+                                st.text(bilstm_report)
+
+                            # store model + report + preds in session for later use
+                            st.session_state["bilstm_model"] = bilstm
+                            st.session_state["bilstm_report"] = bilstm_report
+                            st.session_state["bilstm_y_true"] = y_true
+                            st.session_state["bilstm_y_pred"] = y_pred
+
                 except KeyError:
                     st.error("Sequence training data not found in session. Run 'Preprocess & Split' first.")
                 except Exception as e:
                     st.error(f"BiLSTM training failed: {e}")
 
-        st.success("Training finished and models saved to session.")
 
 # ---- Line-by-line predictions ----
 st.subheader("Predict line-by-line sentences")
