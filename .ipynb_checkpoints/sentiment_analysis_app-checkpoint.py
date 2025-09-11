@@ -391,7 +391,7 @@ if st.button("Train LogisticRegression, NaiveBayes, SVC, BiLSTM"):
 
                             if bilstm_acc is not None:
                                 # st.write(f"BiLSTM — Accuracy: {bilstm_acc:.4f}")
-                                st.write("BiLSTM — Accuracy:", bilstm_acc")
+                                st.write("BiLSTM — Accuracy:", bilstm_acc)
                             if bilstm_report is not None:
                                 st.text(bilstm_report)
 
