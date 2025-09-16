@@ -1,0 +1,101 @@
+## Voice-Over Script (Full Walkthrough)
+
+---
+
+### Step 1: Intro
+**"Hello and welcome. This tutorial is part of my project work for the Professional Diploma in Artificial Intelligence at IPCS Kochi.
+
+In this project, we’ll be building a complete sentiment analysis system for restaurant reviews. The dataset we’re using comes from Kaggle, and I’ve also provided it in the dedicated GitHub repository for this project. The journey starts right here in a Jupyter Notebook, where we’ll first clean and preprocess text, then train classical machine learning models like Logistic Regression, Naive Bayes, and Support Vector Classifier. After that, we’ll go one step further and build a deep learning model — a Bidirectional LSTM, or BiLSTM for short.
+
+Once we understand how everything works locally, we’ll move on to the second part of the project: developing a fully interactive Streamlit web app. That app will let users upload their own data, train models, and predict sentiments directly in the browser.
+
+So, our flow is simple: start in the notebook → build and test our models → finally, turn it into a Streamlit app. Let’s begin with the notebook."*
+
+---
+
+### Step 2: Importing Libraries
+
+*"First, we bring in all the tools we need. Regular expressions and string handling for cleaning text. Pandas and NumPy for data handling. NLTK for natural language processing. Scikit-learn for classical machine learning models like Logistic Regression, Naive Bayes, and Support Vector Machines. And finally, TensorFlow and Keras for our deep learning BiLSTM model."*
+
+---
+
+### Step 3: Text Resources
+
+*"Before we can process text, we need some extra resources. We download Punkt, which helps break text into sentences and words, and Stopwords, which lets us filter out very common words like ‘the’ or ‘is’. We also prepare a list of stopwords and a Porter stemmer, which reduces words down to their root form. For example, ‘running’ becomes ‘run’."*
+
+---
+
+### Step 4: Preprocessing Function
+
+*"Here’s where the cleaning happens. This preprocess function takes raw text and transforms it. It lowercases everything, removes punctuation and numbers, handles negation words like ‘not’ carefully, and stems words down to their base. At the end, we get a clean, simplified version of the review that’s much easier for a model to learn from."*
+
+---
+
+### Step 5: Loading the Dataset
+
+*"We’re working with a dataset of restaurant reviews. It’s stored in a TSV file, which means tab-separated values. Using pandas, we load this into a DataFrame. Each row is a review, and each review has a label — whether the customer liked the place or not."*
+
+---
+
+### Step 6: Cleaning the Dataset
+
+*"Now we apply our preprocess function to each review and store the cleaned version in a new column called ‘clean\_Review’. This way, we keep both the original and the cleaned text for reference."*
+
+---
+
+### Step 7: TF-IDF Vectorization
+
+*"Words are not numbers, but models need numbers. So here we use TF-IDF — Term Frequency–Inverse Document Frequency. It turns each cleaned review into a vector that represents how important each word is in that review compared to all reviews. Alongside that, we also pull out our labels, which are the answers our models will try to predict."*
+
+---
+
+### Step 8: Preparing Sequences for BiLSTM
+
+*"For deep learning, we need a different format. Instead of TF-IDF, we turn each word into an integer using a tokenizer. Then we pad all sequences to the same length, so that every review looks like a fixed-size input to the BiLSTM. This step is essential, because neural networks expect uniform input shapes."*
+
+---
+
+### Step 9: Train-Test Split
+
+*"We split the dataset into training and testing parts. The training set is what our models learn from. The testing set is kept aside and never shown to the model during training — it’s used only to check how well the model generalizes to new data. We do this split both for the TF-IDF features and for the BiLSTM sequences."*
+
+---
+
+### Step 10: Training Classical Models
+
+*"Now we define a helper function to train any model and print its results. Using this, we train three classical machine learning models: Logistic Regression, Naive Bayes, and Support Vector Classifier. Each model prints out its accuracy and a classification report, showing precision, recall, and F1 score."*
+
+---
+
+### Step 11: Training the BiLSTM
+
+*"Here comes the star — the Bidirectional LSTM. It reads each review in both directions — forward and backward — to capture context. We build two versions depending on whether it’s binary or multiclass classification. We add dropout layers to reduce overfitting, and train for several epochs with early stopping. Finally, we evaluate the BiLSTM on the test set and print its accuracy and detailed classification report."*
+
+---
+
+### Step 12: Prediction Functions
+
+*"To make our models useful, we write two helper functions for prediction.
+The first works with classical models and TF-IDF features.
+The second works with the BiLSTM model, using the tokenizer and padded sequences. These functions take in raw text and return a human-readable sentiment label, like Positive or Negative."*
+
+---
+
+### Step 13: Testing Predictions
+
+*"Let’s test it. We feed in a new review: ‘I am not happy with the service’. Logistic Regression, Naive Bayes, and SVC each make their predictions. And we also check the BiLSTM, which runs the text through the tokenizer and sequence model to predict sentiment. This shows us how different approaches handle the same input."*
+
+---
+
+### Step 14: Saving Models
+
+*"Finally, we save our work. We save the tokenizer and the BiLSTM model so we don’t need to retrain them next time. The model can be saved in TensorFlow’s SavedModel format or as an H5 file, depending on your setup. This way, we can reload everything quickly for future predictions."*
+
+---
+
+**Outro**
+*"And that’s it! We’ve taken raw restaurant reviews, cleaned them, transformed them into numbers, trained classical machine learning models, and trained a deep learning BiLSTM model. We compared their predictions and saved the artifacts. This project shows the complete journey from raw text to sentiment predictions using both traditional and deep learning approaches."*
+
+---
+
+👉 Would you like me to now **condense this into a one-page narration script** (no “step numbers”, just continuous flow like you’d hear in a YouTube tutorial), or keep it cell-by-cell so you can pause your voice-over at each code cell?
